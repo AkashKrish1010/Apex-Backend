@@ -29,6 +29,7 @@ pids
 *.tsbuildinfo
 dist/
 build/
+server.js
 
 # IDEs and editors
 .idea/

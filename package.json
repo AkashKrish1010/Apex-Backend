@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "build": "tsc",
     "dev": "tsx server.ts",
     "start": "node server.js"
   },
