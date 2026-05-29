@@ -35,19 +35,23 @@ app.post("/api/parse-meal", async (req, res) => {
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-lite",
-      contents: `Parse this meal text and estimate the macros. Return only JSON with name, calories, protein, carbs, fat. Text: "${text}"`,
+      contents: `You are a nutrition assistant. Determine if the following input describes a valid edible food item or meal.
+If the input is NOT food/edible (e.g., random characters, gibberish, computer code, programming terms, insults, or objects like tables/chairs/cars), set "isValidFood" to false, "name" to "invalid", and all macro values to 0.
+Otherwise, if it is a valid food/meal, set "isValidFood" to true and estimate its name and macronutrients (calories, protein, carbs, fat).
+Input text: "${text}"`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            isValidFood: { type: Type.BOOLEAN },
             name: { type: Type.STRING },
             calories: { type: Type.NUMBER },
             protein: { type: Type.NUMBER },
             carbs: { type: Type.NUMBER },
             fat: { type: Type.NUMBER }
           },
-          required: ["name", "calories", "protein", "carbs", "fat"]
+          required: ["isValidFood", "name", "calories", "protein", "carbs", "fat"]
         }
       }
     });
