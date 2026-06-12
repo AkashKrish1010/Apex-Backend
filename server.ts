@@ -43,6 +43,89 @@ const ai = new GoogleGenAI({
   }
 });
 
+import { exec } from "child_process";
+
+let datasetPath = "";
+let workoutMap: Record<string, string[]> = {};
+
+// Exact exercise names matching the bundled assets in apex-rn/src/workoutAssets.ts
+// The AI must only suggest from this list so local assets always resolve.
+const MOCK_EXERCISES: Record<string, string[]> = {
+  'barbell biceps curl': ['barbell_biceps_curl.mp4'],
+  'bench press':         ['bench_press.mp4'],
+  'chest fly machine':   ['chest_fly_machine.mp4'],
+  'deadlift':            ['deadlift.mp4'],
+  'decline bench press': ['decline_bench_press.mp4'],
+  'hammer curl':         ['hammer_curl.mp4'],
+  'hip thrust':          ['hip_thrust.mp4'],
+  'incline bench press': ['incline_bench_press.mp4'],
+  'lat pulldown':        ['lat_pulldown.mp4'],
+  'lateral raise':       ['lateral_raise.mp4'],
+  'leg extension':       ['leg_extension.mp4'],
+  'leg raises':          ['leg_raises.mp4'],
+  'plank':               ['plank.mp4'],
+  'pull up':             ['pull_up.mp4'],
+  'push-up':             ['push_up.mp4'],
+  'romanian deadlift':   ['romanian_deadlift.mp4'],
+  'russian twist':       ['russian_twist.mp4'],
+  'shoulder press':      ['shoulder_press.mp4'],
+  'squat':               ['squat.mp4'],
+  't bar row':           ['t_bar_row.mp4'],
+  'tricep pushdown':     ['tricep_pushdown.mp4'],
+  'tricep dips':         ['tricep_dips.mp4'],
+};
+
+// Asynchronously download/resolve the Kaggle dataset
+function initKaggleDataset() {
+  console.log("[Kaggle] Initiating workout videos dataset resolution...");
+  exec(
+    `python -c "import kagglehub; print(kagglehub.dataset_download('hasyimabdillah/workoutfitness-video'))"`,
+    (err, stdout, stderr) => {
+      if (!err) {
+        datasetPath = stdout.trim();
+        console.log(`[Kaggle] Dataset successfully resolved at: ${datasetPath}`);
+        buildWorkoutMap();
+      } else {
+        console.error("[Kaggle] Error resolving dataset path. Using mock fallback.", err, stderr);
+        workoutMap = { ...MOCK_EXERCISES };
+      }
+    }
+  );
+}
+
+function buildWorkoutMap() {
+  if (!datasetPath || !fs.existsSync(datasetPath)) {
+    workoutMap = { ...MOCK_EXERCISES };
+    return;
+  }
+  try {
+    const map: Record<string, string[]> = {};
+    const exercises = fs.readdirSync(datasetPath);
+    for (const ex of exercises) {
+      const exPath = path.join(datasetPath, ex);
+      if (fs.statSync(exPath).isDirectory()) {
+        const files = fs.readdirSync(exPath).filter(f => f.toLowerCase().endsWith(".mp4"));
+        if (files.length > 0) {
+          map[ex] = files;
+        }
+      }
+    }
+    if (Object.keys(map).length > 0) {
+      workoutMap = map;
+      console.log(`[Kaggle] Successfully built workout map with ${Object.keys(workoutMap).length} exercises from disk.`);
+    } else {
+      workoutMap = { ...MOCK_EXERCISES };
+      console.log("[Kaggle] Empty directory. Using mock fallback map.");
+    }
+  } catch (err) {
+    console.error("[Kaggle] Error reading dataset files. Using mock fallback.", err);
+    workoutMap = { ...MOCK_EXERCISES };
+  }
+}
+
+// Trigger initialization
+initKaggleDataset();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH ENDPOINTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,15 +392,21 @@ app.post("/api/recommendations", async (req, res) => {
       return;
     }
 
-    const { bmi, bmiCategory, currentWeight, startWeight, avgCalories, avgProtein, recentWorkouts, age, gender, activityLevel } = data;
+    const { bmi, bmiCategory, currentWeight, startWeight, targetWeight, avgCalories, avgProtein, recentWorkouts, age, gender, activityLevel } = data;
+
+    const targetW = Number(targetWeight || currentWeight);
+    const exerciseNames = Object.keys(workoutMap).length > 0 ? Object.keys(workoutMap) : Object.keys(MOCK_EXERCISES);
 
     const prompt = `You are an expert fitness and nutrition AI coach. Based on the following user data, provide highly personalized recommendations. 
-Format your response exactly as JSON with 3 specific sections (strings): dietRecommendations, workoutAdjustments, progressAnalysis.
-Be specific, motivating, and actionable. Avoid using asterisks. Keep it relatively concise but impactful.
+Format your response exactly as JSON with 4 specific sections:
+- dietRecommendations (string): Diet suggestions
+- workoutAdjustments (string): Workout adjustment notes
+- progressAnalysis (string): Analysis of their progress
+- suggestedWorkouts (array of strings): Select exactly 2 to 3 exercise names from this list of available exercises: [${exerciseNames.join(", ")}]. Select exercises that directly help them reach their goal weight. Do not suggest exercises that are not in this list.
 
 User Profile:
 - BMI: ${bmi} (${bmiCategory})
-- Current Weight: ${currentWeight}kg, Starting Weight: ${startWeight}kg
+- Current Weight: ${currentWeight}kg, Starting Weight: ${startWeight}kg, Goal/Target Weight: ${targetW}kg
 - Recent meals (last 3 days avg): ${avgCalories} kcal/day, ${avgProtein}g protein
 - Recent workouts count: ${recentWorkouts}
 - Age: ${age}, Gender: ${gender}
@@ -333,18 +422,57 @@ User Profile:
           properties: {
             dietRecommendations: { type: Type.STRING },
             workoutAdjustments: { type: Type.STRING },
-            progressAnalysis: { type: Type.STRING }
+            progressAnalysis: { type: Type.STRING },
+            suggestedWorkouts: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
           },
-          required: ["dietRecommendations", "workoutAdjustments", "progressAnalysis"]
+          required: ["dietRecommendations", "workoutAdjustments", "progressAnalysis", "suggestedWorkouts"]
         }
       }
     });
 
-    res.json(JSON.parse(response.text || '{}'));
+    const parsed = JSON.parse(response.text || '{}');
+    
+    // Clean and validate suggestedWorkouts to ensure they are valid keys in our map
+    const suggested = (parsed.suggestedWorkouts || []).filter((ex: any) => 
+      typeof ex === 'string' && (workoutMap[ex.toLowerCase()] || MOCK_EXERCISES[ex.toLowerCase()])
+    ).map((ex: string) => ex.toLowerCase());
+
+    res.json({
+      dietRecommendations: parsed.dietRecommendations || "",
+      workoutAdjustments: parsed.workoutAdjustments || "",
+      progressAnalysis: parsed.progressAnalysis || "",
+      suggestedWorkouts: suggested
+    });
   } catch (error) {
     console.error("Coaching analysis failed:", error);
     res.status(500).json({ error: "Failed to generate coaching suggestions" });
   }
+});
+
+// Endpoint: Get available workout videos map
+app.get("/api/workout-videos", (req, res) => {
+  res.json({ exercises: Object.keys(workoutMap).length > 0 ? workoutMap : MOCK_EXERCISES });
+});
+
+// Endpoint: Stream exercise video file
+app.get("/api/workout-video/:exercise/:filename", (req, res) => {
+  const { exercise, filename } = req.params;
+  const safeExercise = exercise.replace(/[^a-zA-Z0-9_\-\s]/g, "");
+  const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\s\.]/g, "");
+
+  if (datasetPath && fs.existsSync(datasetPath)) {
+    const videoPath = path.join(datasetPath, safeExercise, safeFilename);
+    if (fs.existsSync(videoPath)) {
+      res.sendFile(videoPath);
+      return;
+    }
+  }
+
+  // Fallback: Redirect to a public exercise video if dataset is still downloading or video not found
+  res.redirect("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
 });
 
 // Health check endpoint

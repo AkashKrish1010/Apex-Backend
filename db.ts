@@ -13,6 +13,7 @@ export interface UserProfile {
   gender?: 'M' | 'F';
   height?: number;
   weight?: number;
+  targetWeight?: number;
   unitSystem?: 'metric' | 'imperial';
   bmi?: number;
   activityLevel?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
