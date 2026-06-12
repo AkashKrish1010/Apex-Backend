@@ -26,6 +26,7 @@ export interface User {
   passwordHash: string;
   name: string;
   age: number;
+  createdAt?: string;
   profile?: UserProfile;
 }
 
@@ -75,7 +76,8 @@ export function createUser(user: Omit<User, 'id'>): User {
   const newUser: User = {
     ...user,
     id: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
-    email: user.email.toLowerCase().trim()
+    email: user.email.toLowerCase().trim(),
+    createdAt: new Date().toISOString()
   };
   db.users.push(newUser);
   writeDB(db);

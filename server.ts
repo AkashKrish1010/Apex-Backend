@@ -3,6 +3,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import { GoogleGenAI, Type } from "@google/genai";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { 
   findUserByEmail, 
   createUser, 
@@ -15,6 +18,9 @@ import {
   authenticateToken, 
   AuthRequest 
 } from "./auth.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -71,7 +77,8 @@ app.post("/api/auth/register", async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        age: user.age
+        age: user.age,
+        createdAt: user.createdAt
       }
     });
   } catch (error) {
@@ -108,7 +115,8 @@ app.post("/api/auth/login", async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        age: user.age
+        age: user.age,
+        createdAt: user.createdAt
       },
       profile: user.profile || null
     });
@@ -207,7 +215,8 @@ app.post("/api/auth/profile", authenticateToken as any, async (req: AuthRequest,
         id: updated.id,
         email: updated.email,
         name: updated.name,
-        age: updated.age
+        age: updated.age,
+        createdAt: updated.createdAt
       },
       profile: updated.profile
     });
@@ -237,7 +246,8 @@ app.get("/api/auth/me", authenticateToken as any, async (req: AuthRequest, res) 
         id: user.id,
         email: user.email,
         name: user.name,
-        age: user.age
+        age: user.age,
+        createdAt: user.createdAt
       },
       profile: user.profile || null
     });
@@ -341,6 +351,23 @@ User Profile:
 app.get("/health", (req, res) => {
   res.json({ status: "online", time: new Date().toISOString() });
 });
+
+// Serve built website static files in production
+if (process.env.NODE_ENV === "production") {
+  let distPath = path.resolve(__dirname, "dist");
+  if (!fs.existsSync(distPath)) {
+    distPath = path.resolve(__dirname, "../apex/dist");
+  }
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+    console.log(`[Static Serving] Configured to serve SPA from: ${distPath}`);
+  } else {
+    console.warn(`[WARNING] Static web assets directory not found at: ${distPath}. Running API-only mode.`);
+  }
+}
 
 // Start Server
 app.listen(PORT, "0.0.0.0", () => {
