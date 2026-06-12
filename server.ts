@@ -1,7 +1,20 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
 import { GoogleGenAI, Type } from "@google/genai";
+import { 
+  findUserByEmail, 
+  createUser, 
+  updateUserProfile, 
+  updateUserPassword, 
+  findUserById 
+} from "./db.js";
+import { 
+  generateToken, 
+  authenticateToken, 
+  AuthRequest 
+} from "./auth.js";
 
 dotenv.config();
 
@@ -23,6 +36,220 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Register
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { email, password, name, age } = req.body;
+    if (!email || !password || !name || age === undefined) {
+      res.status(400).json({ error: "Missing required parameters (email, password, name, age)." });
+      return;
+    }
+
+    const existing = findUserByEmail(email);
+    if (existing) {
+      res.status(409).json({ error: "Email target already initialized/registered." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = createUser({
+      email,
+      passwordHash,
+      name,
+      age: Number(age),
+    });
+
+    const token = generateToken(user.id, user.email);
+    res.status(201).json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        age: user.age
+      }
+    });
+  } catch (error) {
+    console.error("Registration failed:", error);
+    res.status(500).json({ error: "Internal server error during registration." });
+  }
+});
+
+// Login
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      res.status(400).json({ error: "Email and password are required." });
+      return;
+    }
+
+    const user = findUserByEmail(email);
+    if (!user) {
+      res.status(401).json({ error: "Invalid credential parameters." });
+      return;
+    }
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
+      res.status(401).json({ error: "Invalid credential parameters." });
+      return;
+    }
+
+    const token = generateToken(user.id, user.email);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        age: user.age
+      },
+      profile: user.profile || null
+    });
+  } catch (error) {
+    console.error("Login failed:", error);
+    res.status(500).json({ error: "Internal server error during verification." });
+  }
+});
+
+// Forgot password
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ error: "Email is required." });
+      return;
+    }
+
+    const user = findUserByEmail(email);
+    if (!user) {
+      // Return 200 for security, but with warning
+      res.json({ 
+        success: true, 
+        message: "If email exists in system baseline, recovery telemetry has been launched." 
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: "RECOVERY PROTOCOL INITIATED. Mock recovery token has been synchronized.",
+      resetCode: "APEX-RCVR-" + Math.floor(100000 + Math.random() * 900000)
+    });
+  } catch (error) {
+    console.error("Forgot password failed:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// Change password (auth required)
+app.post("/api/auth/change-password", authenticateToken as any, async (req: AuthRequest, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword) {
+      res.status(400).json({ error: "Both old and new passwords are required." });
+      return;
+    }
+
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized access profile." });
+      return;
+    }
+
+    const user = findUserById(userId);
+    if (!user) {
+      res.status(404).json({ error: "User profile not found." });
+      return;
+    }
+
+    const valid = await bcrypt.compare(oldPassword, user.passwordHash);
+    if (!valid) {
+      res.status(400).json({ error: "Current password validation failed." });
+      return;
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    updateUserPassword(userId, newHash);
+
+    res.json({ success: true, message: "Credentials successfully updated." });
+  } catch (error) {
+    console.error("Change password failed:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// Profile update (auth required)
+app.post("/api/auth/profile", authenticateToken as any, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized access profile." });
+      return;
+    }
+
+    const profileData = req.body;
+    const updated = updateUserProfile(userId, profileData);
+    if (!updated) {
+      res.status(404).json({ error: "User profile update failed." });
+      return;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: updated.id,
+        email: updated.email,
+        name: updated.name,
+        age: updated.age
+      },
+      profile: updated.profile
+    });
+  } catch (error) {
+    console.error("Profile sync failed:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// Current User Details
+app.get("/api/auth/me", authenticateToken as any, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized access profile." });
+      return;
+    }
+
+    const user = findUserById(userId);
+    if (!user) {
+      res.status(404).json({ error: "User baseline not found." });
+      return;
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        age: user.age
+      },
+      profile: user.profile || null
+    });
+  } catch (error) {
+    console.error("Get user details failed:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MEAL & REC ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Endpoint: Parse Meal Text to estimate macros
 app.post("/api/parse-meal", async (req, res) => {
