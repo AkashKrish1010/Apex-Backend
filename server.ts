@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { 
+  connectDB,
   findUserByEmail, 
   createUser, 
   updateUserProfile, 
@@ -139,14 +140,14 @@ app.post("/api/auth/register", async (req, res) => {
       return;
     }
 
-    const existing = findUserByEmail(email);
+    const existing = await findUserByEmail(email);
     if (existing) {
       res.status(409).json({ error: "Email target already initialized/registered." });
       return;
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = createUser({
+    const user = await createUser({
       email,
       passwordHash,
       name,
@@ -179,7 +180,7 @@ app.post("/api/auth/login", async (req, res) => {
       return;
     }
 
-    const user = findUserByEmail(email);
+    const user = await findUserByEmail(email);
     if (!user) {
       res.status(401).json({ error: "Invalid credential parameters." });
       return;
@@ -218,7 +219,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       return;
     }
 
-    const user = findUserByEmail(email);
+    const user = await findUserByEmail(email);
     if (!user) {
       // Return 200 for security, but with warning
       res.json({ 
@@ -254,7 +255,7 @@ app.post("/api/auth/change-password", authenticateToken as any, async (req: Auth
       return;
     }
 
-    const user = findUserById(userId);
+    const user = await findUserById(userId);
     if (!user) {
       res.status(404).json({ error: "User profile not found." });
       return;
@@ -267,7 +268,7 @@ app.post("/api/auth/change-password", authenticateToken as any, async (req: Auth
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    updateUserPassword(userId, newHash);
+    await updateUserPassword(userId, newHash);
 
     res.json({ success: true, message: "Credentials successfully updated." });
   } catch (error) {
@@ -286,7 +287,7 @@ app.post("/api/auth/profile", authenticateToken as any, async (req: AuthRequest,
     }
 
     const profileData = req.body;
-    const updated = updateUserProfile(userId, profileData);
+    const updated = await updateUserProfile(userId, profileData);
     if (!updated) {
       res.status(404).json({ error: "User profile update failed." });
       return;
@@ -318,7 +319,7 @@ app.get("/api/auth/me", authenticateToken as any, async (req: AuthRequest, res) 
       return;
     }
 
-    const user = findUserById(userId);
+    const user = await findUserById(userId);
     if (!user) {
       res.status(404).json({ error: "User baseline not found." });
       return;
@@ -497,10 +498,19 @@ if (process.env.NODE_ENV === "production") {
   }
 }
 
-// Start Server
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`===========================================`);
-  console.log(` APEX FITNESS STANDALONE BACKEND RUNNING`);
-  console.log(` URL: http://localhost:${PORT}`);
-  console.log(`===========================================`);
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// START SERVER — connect to MongoDB first, then listen
+// ─────────────────────────────────────────────────────────────────────────────
+connectDB()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`===========================================`);
+      console.log(` APEX FITNESS STANDALONE BACKEND RUNNING`);
+      console.log(` URL: http://localhost:${PORT}`);
+      console.log(`===========================================`);
+    });
+  })
+  .catch((err: Error) => {
+    console.error("[FATAL] Could not connect to MongoDB. Server not started.", err.message);
+    process.exit(1);
+  });
